@@ -14,7 +14,7 @@ func (app *application) createBookHandler(w http.ResponseWriter, r *http.Request
 		Author string `json:"author"`
 		Title string `json:"title"`
 		Year int32 `json:"year,omitempty"`
-		Readtime int32 `json:"-"`  // Add the string directive
+		Readtime data.Readtime  `json:"readtime"`  // Add the string directive
 		Genres []string `json:"genres,omitempty"` 
 		PageCount int32 `json:"pagecount,omitempty"`
 		Rating float32 `json:"rating,omitempty"`
@@ -23,7 +23,7 @@ func (app *application) createBookHandler(w http.ResponseWriter, r *http.Request
 		}
 	err := app.readJSON(w,r,&input)
 	if err != nil {
-		app.errorResponse(w,r,http.StatusBadRequest,err.Error())
+		app.badRequestResponse(w,r,err)
 		return
 	}
 	fmt.Fprintf(w, "%+v\n", input)
