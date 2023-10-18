@@ -1,6 +1,5 @@
 package main
 import ( 
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -22,7 +21,7 @@ func (app *application) createBookHandler(w http.ResponseWriter, r *http.Request
 		Language []string `json:"language,omitempty"`
 		Version int32  `json:"version"` 
 		}
-	err := json.NewDecoder(r.Body).Decode(&input)
+	err := app.readJSON(w,r,&input)
 	if err != nil {
 		app.errorResponse(w,r,http.StatusBadRequest,err.Error())
 		return
