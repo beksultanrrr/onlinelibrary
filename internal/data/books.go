@@ -2,18 +2,19 @@ package data
 import (
 	 "time"
 	 "fmt"
+	 "encoding/json"
 )
 
 
 type Book struct {
-	ID   int64 
-	CreatedAt time.Time // Use the - directive
-	Author string 
-	Title string 
-	Year int32 
-	Runtime int32
-	Genres []string 
-	Version int32 
+	ID   int64 `json:"id"`
+	CreatedAt time.Time `json:"-"` // Use the - directive
+	Author string `json:"author"`
+	Title string `json:"title"`
+	Year int32 `json:"year,omitempty"`
+	Runtime int32 `json:"-"`  // Add the string directive
+	Genres []string `json:"genres,omitempty"` 
+	Version int32  `json:"version"` 
 
 }
 
@@ -24,29 +25,14 @@ func (m Book) MarshalJSON() ([]byte, error) {
 	if m.Runtime != 0 {
 		runtime = fmt.Sprintf("%d mins", m.Runtime) 
 	}
-	// Create an anonymous struct to hold the data for JSON encoding. This has exactly // the same fields, types and tags as our Movie struct, except that the Runtime
-	// field here is a string, instead of an int32. Also notice that we don't include // a CreatedAt field at all (there's no point including one, because we don't want // it to appear in the JSON output).
+	type BookAllias Book
 	aux := struct {
-		ID   int64 
-	CreatedAt time.Time `json:"-"` // Use the - directive
-	Author string `json:"author"`
-	Title string `json:"title"`
-	Year int32 `json:"year,omitempty"`
-	Runtime string `json:"runtime,omitempty"` // Add the string directive
-	Genres []string `json:"genres,omitempty"` 
-	Version int32  `json:"version"` 
+		BookAllias
+		Runtime string  `json:"runtime,omitempty"`
 	}{
-	ID:  m.ID,
-	CreatedAt: m.CreatedAt,
-	Author: m.Author,
-	Title: m.Title,
-	Year: m.Year,
-	Runtime: m.Runtime,// Add the string directive
-	Genres: m.Genres,
-	Version: m.Version,
+	 BookAllias: BookAllias(m),
+	 Runtime: runtime,
 	}
-	// Set the values for the anonymous struct.
-
-	// Encode the anonymous struct to JSON, and return it.
+	
 	return json.Marshal(aux) 
 }
