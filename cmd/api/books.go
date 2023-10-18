@@ -1,5 +1,6 @@
 package main
 import ( 
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -8,8 +9,26 @@ import (
 // Add a createBookHandler for the "POST /v1/Books" endpoint. For now we simply
 // return a plain-text placeholder response.
 func (app *application) createBookHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "create a new Book") 
-}
+	
+	var input struct {
+		CreatedAt time.Time `json:"-"` // Use the - directive
+		Author string `json:"author"`
+		Title string `json:"title"`
+		Year int32 `json:"year,omitempty"`
+		Readtime int32 `json:"-"`  // Add the string directive
+		Genres []string `json:"genres,omitempty"` 
+		PageCount int32 `json:"pagecount,omitempty"`
+		Rating float32 `json:"rating,omitempty"`
+		Language []string `json:"language,omitempty"`
+		Version int32  `json:"version"` 
+		}
+	err := json.NewDecoder(r.Body).Decode(&input)
+	if err != nil {
+		app.errorResponse(w,r,http.StatusBadRequest,err.Error())
+		return
+	}
+	fmt.Fprintf(w, "%+v\n", input)
+	}
 // Add a showBookHandler for the "GET /v1/Books/:id" endpoint. For now, we retrieve // the interpolated "id" parameter from the current URL and include it in a placeholder // response.
 func (app *application) showBookHandler(w http.ResponseWriter, r *http.Request) {
 id, err := app.readIDParam(r)
@@ -20,12 +39,15 @@ id, err := app.readIDParam(r)
 book := data.Book{
 	ID:   id,
 	CreatedAt: time.Now(), 
-	Title: "Сказка о рыбаке и рыбке ",
-	Runtime: 102,
+	Title: "Skazka ",
+	Readtime: 102,
 	Genres: []string{"drama","romance","war"},
 	Version: 1,
-	Author: "Пушкин",
+	Author: "Pushkin",
 	Year: 1985,
+	Language: []string{"Rus","Eng"},
+	PageCount: 130,
+	Rating: 8.5,
 
 
 }
