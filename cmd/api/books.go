@@ -123,14 +123,14 @@ func (app *application) updateBookHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	var input struct {
-		Author    string        `json:"author"`
-		Title     string        `json:"title"`
-		Year      int32         `json:"year,omitempty"`
-		Readtime  data.Readtime `json:"readtime"` // Add the string directive
-		Genres    []string      `json:"genres,omitempty"`
-		PageCount int32         `json:"pagecount,omitempty"`
-		Rating    float32       `json:"rating,omitempty"`
-		Languages []string      `json:"language,omitempty"`
+		Author    *string        `json:"author"`
+		Title     *string        `json:"title"`
+		Year      *int32         `json:"year,omitempty"`
+		Readtime  *data.Readtime `json:"readtime"` // Add the string directive
+		Genres    []string       `json:"genres,omitempty"`
+		PageCount *int32         `json:"pagecount,omitempty"`
+		Rating    *float32       `json:"rating,omitempty"`
+		Languages []string       `json:"language,omitempty"`
 	}
 
 	err = app.readJSON(w, r, &input)
@@ -139,14 +139,37 @@ func (app *application) updateBookHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	book.Author = input.Author
-	book.Title = input.Title
-	book.Year = input.Year
-	book.Readtime = input.Readtime
-	book.Genres = input.Genres
-	book.PageCount = input.PageCount
-	book.Rating = input.Rating
-	book.Languages = input.Languages
+	// If the input.Title value is nil then we know that no corresponding "title" key/
+	// value pair was provided in the JSON request body. So we move on and leave the
+	// movie record unchanged. Otherwise, we update the movie record with the new title
+	// value. Importantly, because input.Title is a now a pointer to a string, we need
+	// to dereference the pointer using the * operator to get the underlying value
+	// before assigning it to our movie record.
+	if input.Title != nil {
+		book.Title = *input.Title
+	}
+	// We also do the same for the other fields in the input struct.
+	if input.Year != nil {
+		book.Year = *input.Year
+	}
+	if input.Readtime != nil {
+		book.Readtime = *input.Readtime
+	}
+	if input.Genres != nil {
+		book.Genres = input.Genres // Note that we don't need to dereference a slice.
+	}
+	if input.Author != nil {
+		book.Author = *input.Author
+	}
+	if input.PageCount != nil {
+		book.PageCount = *input.PageCount
+	}
+	if input.Rating != nil {
+		book.Rating = *input.Rating // Note that we don't need to dereference a slice.
+	}
+	if input.Languages != nil {
+		book.Languages = input.Languages // Note that we don't need to dereference a slice.
+	}
 
 	// Validate the updated movie record, sending the client a 422 Unprocessable Entity
 	// response if any checks fail.
@@ -159,7 +182,12 @@ func (app *application) updateBookHandler(w http.ResponseWriter, r *http.Request
 	// Pass the updated movie record to our new Update() method.
 	err = app.models.Books.Update(book)
 	if err != nil {
-		app.serverErrorResponse(w, r, err)
+		switch {
+		case errors.Is(err, data.ErrEditConflict):
+			app.editConflictResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 	// Write the updated movie record in a JSON response.
@@ -190,6 +218,51 @@ func (app *application) deleteBookHandler(w http.ResponseWriter, r *http.Request
 	}
 	// Return a 200 OK status code along with a success message.
 	err = app.writeJSON(w, http.StatusOK, envelope{"message": "book successfully deleted"}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
+
+func (app *application) listBooksHandler(w http.ResponseWriter, r *http.Request) {
+	// To keep things consistent with our other handlers, we'll define an input struct
+	// to hold the expected values from the request query string.
+	var input struct {
+		Title  string
+		Genres []string
+		data.Filters
+	}
+	// Initialize a new Validator instance.
+	v := validator.New()
+	// Call r.URL.Query() to get the url.Values map containing the query string data.
+	qs := r.URL.Query()
+	// Use our helpers to extract the title and genres query string values, falling back
+	// to defaults of an empty string and an empty slice respectively if they are not
+	// provided by the client.
+	input.Title = app.readString(qs, "title", "")
+	input.Genres = app.readCSV(qs, "genres", []string{})
+	// Get the page and page_size query string values as integers. Notice that we set
+	// the default page value to 1 and default page_size to 20, and that we pass the
+	// validator instance as the final argument here.
+	input.Filters.Page = app.readInt(qs, "page", 1, v)
+	input.Filters.PageSize = app.readInt(qs, "page_size", 20, v)
+	// Extract the sort query string value, falling back to "id" if it is not provided
+	// by the client (which will imply a ascending sort on movie ID).
+	input.Filters.Sort = app.readString(qs, "sort", "id")
+	input.Filters.SortSafelist = []string{"id", "author", "title", "year", "readtime", "-id", "-author", "-title", "-year", "-readtime"}
+	// Execute the validation checks on the Filters struct and send a response
+	// containing the errors if necessary.
+	if data.ValidateFilters(v, input.Filters); !v.Valid() {
+		app.failedValidationResponse(w, r, v.Errors)
+		return
+	}
+	// Accept the metadata struct as a return value.
+	books, metadata, err := app.models.Books.GetAll(input.Title, input.Genres, input.Filters)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+	// Include the metadata in the response envelope.
+	err = app.writeJSON(w, http.StatusOK, envelope{"books": books, "metadata": metadata}, nil)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 	}

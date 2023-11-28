@@ -12,4 +12,6 @@ require (
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/mattes/migrate v3.0.1+incompatible // indirect
 	go.uber.org/atomic v1.7.0 // indirect
+	golang.org/x/crypto v0.15.0 // indirect
+	golang.org/x/time v0.4.0 // indirect
 )
