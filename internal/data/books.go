@@ -1,6 +1,7 @@
 package data
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -72,7 +73,7 @@ func (m BookModel) Insert(book *Book) error {
 	// Define the SQL query for inserting a new record in the movies table and returning
 	// the system-generated data.
 	query := `
-		INSERT INTO books (author, title, year, readtime, genres, pagecount, rating, language)
+		INSERT INTO books (author, title, year, readtime, genres, pagecount, rating, languages)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at, version`
 	// Create an args slice containing the values for the placeholder parameters from
@@ -82,7 +83,10 @@ func (m BookModel) Insert(book *Book) error {
 	// Use the QueryRow() method to execute the SQL query on our connection pool,
 	// passing in the args slice as a variadic parameter and scanning the system-
 	// generated id, created_at and version values into the movie struct.
-	return m.DB.QueryRow(query, args...).Scan(&book.ID, &book.CreatedAt, &book.Version)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return m.DB.QueryRowContext(ctx, query, args...).Scan(&book.ID, &book.CreatedAt, &book.Version)
 }
 
 // Add a placeholder method for fetching a specific record from the movies table.
@@ -96,16 +100,24 @@ func (m BookModel) Get(id int64) (*Book, error) {
 	}
 	// Define the SQL query for retrieving the movie data.
 	query := `
-		SELECT id, created_at, author, title, year, readtime, genres, pagecount, rating, language, version
+		SELECT id, created_at, author, title, year, readtime, genres, pagecount, rating, languages, version
 		FROM books
 		WHERE id = $1`
 	var book Book
+
+	// Use the context.WithTimeout() function to create a context.Context which carries a
+	// 3-second timeout deadline. Note that we're using the empty context.Background()
+	// as the 'parent' context.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	// Importantly, use defer to make sure that we cancel the context before the Get()
+	// method returns
+	defer cancel()
 
 	// Execute the query using the QueryRow() method, passing in the provided id value
 	// as a placeholder parameter, and scan the response data into the fields of the
 	// Movie struct. Importantly, notice that we need to convert the scan target for the
 	// genres column using the pq.Array() adapter function again.
-	err := m.DB.QueryRow(query, id).Scan(
+	err := m.DB.QueryRowContext(ctx, query, id).Scan(
 		&book.ID,
 		&book.CreatedAt,
 		&book.Author,
@@ -140,8 +152,8 @@ func (m BookModel) Update(book *Book) error {
 	// number.
 	query := `
 		UPDATE books
-		SET author = $1, title = $2, year = $3, readtime = $4, genres = $5, pagecount = $6, rating = $7, language = $8, version = version + 1
-		WHERE id = $9
+		SET author = $1, title = $2, year = $3, readtime = $4, genres = $5, pagecount = $6, rating = $7, languages = $8, version = version + 1
+		WHERE id = $9 AND version = $10
 		RETURNING version`
 	// Create an args slice containing the values for the placeholder parameters.
 	args := []interface{}{
@@ -154,10 +166,24 @@ func (m BookModel) Update(book *Book) error {
 		book.Rating,
 		pq.Array(book.Languages),
 		book.ID,
+		book.Version,
 	}
-	// Use the QueryRow() method to execute the query, passing in the args slice as a
-	// variadic parameter and scanning the new version value into the movie struct.
-	return m.DB.QueryRow(query, args...).Scan(&book.Version)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	// Execute the SQL query. If no matching row could be found, we know the movie
+	// version has changed (or the record has been deleted) and we return our custom
+	// ErrEditConflict error.
+	err := m.DB.QueryRowContext(ctx, query, args...).Scan(&book.Version)
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return ErrEditConflict
+		default:
+			return err
+		}
+	}
+	return nil
 }
 
 // Add a placeholder method for deleting a specific record from the movies table.
@@ -173,7 +199,11 @@ func (m BookModel) Delete(id int64) error {
 	// Execute the SQL query using the Exec() method, passing in the id variable as
 	// the value for the placeholder parameter. The Exec() method returns a sql.Result
 	// object.
-	result, err := m.DB.Exec(query, id)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	result, err := m.DB.ExecContext(ctx, query, id)
 	if err != nil {
 		return err
 	}
@@ -190,4 +220,70 @@ func (m BookModel) Delete(id int64) error {
 		return ErrRecordNotFound
 	}
 	return nil
+}
+
+func (m BookModel) GetAll(title string, genres []string, filters Filters) ([]*Book, Metadata, error) {
+	// Construct the SQL query to retrieve all movie records.
+	query := fmt.Sprintf(`
+		SELECT count(*) OVER(), id, created_at, author, title, year, readtime, genres, pagecount, rating, languages, version
+		FROM books
+		WHERE (to_tsvector('simple', title) @@ plainto_tsquery('simple', $1) OR $1 = '')
+		AND (genres @> $2 OR $2 = '{}')
+		ORDER BY %s %s, id ASC
+		LIMIT $3 OFFSET $4`, filters.sortColumn(), filters.sortDirection())
+	// Create a context with a 3-second timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	args := []interface{}{title, pq.Array(genres), filters.limit(), filters.offset()}
+	// Use QueryContext() to execute the query. This returns a sql.Rows resultset
+	// containing the result.
+	rows, err := m.DB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, Metadata{}, err
+	}
+	// Importantly, defer a call to rows.Close() to ensure that the resultset is closed
+	// before GetAll() returns.
+	defer rows.Close()
+	totalRecords := 0
+	// Initialize an empty slice to hold the movie data.
+	books := []*Book{}
+	// Use rows.Next to iterate through the rows in the resultset.
+	for rows.Next() {
+		// Initialize an empty Movie struct to hold the data for an individual movie.
+		var book Book
+		// Scan the values from the row into the Movie struct. Again, note that we're
+		// using the pq.Array() adapter on the genres field here.
+		err := rows.Scan(
+			&totalRecords,
+			&book.ID,
+			&book.CreatedAt,
+			&book.Author,
+			&book.Title,
+			&book.Year,
+			&book.Readtime,
+			pq.Array(book.Genres),
+			&book.PageCount,
+			&book.Rating,
+			pq.Array(book.Languages),
+			&book.Version,
+		)
+		if err != nil {
+			return nil, Metadata{}, err
+		}
+		// Add the Movie struct to the slice.
+		books = append(books, &book)
+	}
+	// When the rows.Next() loop has finished, call rows.Err() to retrieve any error
+	// that was encountered during the iteration.
+	if err = rows.Err(); err != nil {
+		return nil, Metadata{}, err
+	}
+
+	// Generate a Metadata struct, passing in the total record count and pagination
+	// parameters from the client.
+	metadata := calculateMetadata(totalRecords, filters.Page, filters.PageSize)
+
+	// If everything went OK, then return the slice of movies.
+	return books, metadata, nil
 }

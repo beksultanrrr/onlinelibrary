@@ -5,11 +5,11 @@ services:
     build: ./
     command: ./onlinelibrary
     ports:
-      - 4000:4000
+      - '4000:4000'
     depends_on:
       - db
     environment:
-      - DB_PASSWORD=1899milankaka
+      DB_URL: 'postgres://yerkhat.s2003icloud.com:200306@localhost/greenlight?sslmode=disable'
 
   db:
     restart: always
@@ -17,9 +17,9 @@ services:
     volumes:
       - db:/var/lib/postgresql/data
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=1899milankaka
-      - POSTGRES_DB=greenlight
+       POSTGRES_USER: 'postgres'
+       POSTGRES_PASSWORD: 'password'
+       POSTGRES_DB: 'greenlight'
     ports:
       - '5432:5432'
 volumes:
