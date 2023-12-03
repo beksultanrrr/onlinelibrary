@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  onlinelibrary:
+    build: ./
+    command: ./onlinelibrary
+    ports:
+      - 4000:4000
+    depends_on:
+      - db
+    environment:
+      - DB_PASSWORD=1899milankaka
+
+  db:
+    restart: always
+    image: postgres:latest
+    volumes:
+      - db:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=1899milankaka
+      - POSTGRES_DB=greenlight
+    ports:
+      - '5432:5432'
+volumes:
+  db:
+    driver: local
